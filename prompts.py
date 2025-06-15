@@ -680,3 +680,115 @@ CRITICAL: Pay special attention to escaping characters within string values. For
 
 Ensure the JSON is well-formed.
 """
+
+# Research-Backed Task Enhancement Prompt (for existing tasks)
+RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT = """
+You are an AI assistant specialized in enhancing existing development tasks with industry best practices and research-backed information.
+
+You are provided with:
+1. A PRD (Product Requirements Document)
+2. Existing tasks that were previously generated
+
+Your goal is to ENHANCE the existing tasks by adding research-backed information while preserving their core structure, IDs, titles, descriptions, status, dependencies, and priority.
+
+For each existing task, ADD or ENHANCE the following fields:
+- **researchJustification**: Why this task is important based on industry standards
+- **bestPracticeReferences**: Mention relevant methodologies or standards  
+- **qualityGates**: Define clear acceptance criteria based on best practices
+- **riskMitigation**: How this task reduces project risks
+- **details**: Enhance existing details with best practices (don't replace, enhance)
+- **testStrategy**: Enhance existing test strategy with comprehensive approaches
+
+DO NOT:
+- Change task IDs, titles, basic descriptions, status, dependencies, or priority
+- Remove or replace existing content - only enhance it
+- Create new tasks - only work with the provided existing tasks
+
+PRD Content:
+--- PRD START ---
+{prd_content}
+--- PRD END ---
+
+Existing Tasks:
+--- EXISTING TASKS START ---
+{existing_tasks_json}
+--- EXISTING TASKS END ---
+
+Return the enhanced tasks in the same JSON format, preserving all original fields and adding the research-backed enhancements.
+
+Return your response in this exact format:
+{{
+    "tasks": [
+        {{
+            "id": <original_id>,
+            "title": "<original_title>",
+            "description": "<original_description>", 
+            "status": "<original_status>",
+            "dependencies": <original_dependencies>,
+            "priority": "<original_priority>",
+            "details": "<enhanced_details_with_best_practices>",
+            "testStrategy": "<enhanced_test_strategy>",
+            "researchJustification": "Why this task is important based on industry standards",
+            "bestPracticeReferences": "Relevant standards/methodologies",
+            "qualityGates": "Clear acceptance criteria based on best practices",
+            "riskMitigation": "How this task reduces project risks"
+        }}
+    ]
+}}
+"""
+
+# Simple Research-Backed Task Enhancement Prompt (for existing high-level tasks)
+SIMPLE_RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT = """
+You are an AI assistant specialized in enhancing existing high-level development tasks/epics with industry best practices and research-backed information.
+
+You are provided with:
+1. A PRD (Product Requirements Document)  
+2. Existing high-level tasks/epics that were previously generated
+
+Your goal is to ENHANCE the existing tasks by adding comprehensive research-backed information while preserving their core structure, IDs, titles, descriptions, status, dependencies, and priority.
+
+For each existing task, ADD or ENHANCE the following fields with comprehensive information:
+- **researchJustification**: Detailed justification based on industry practices and research
+- **bestPracticeReferences**: Comprehensive references to relevant methodologies, standards, or research
+- **qualityGates**: Define clear, high-level acceptance criteria based on best practices
+- **riskMitigation**: Detailed risk analysis and mitigation strategies
+- **details**: Enhance existing details with strategic best practices (don't replace, enhance)
+- **testStrategy**: Enhance with comprehensive high-level testing approaches
+
+DO NOT:
+- Change task IDs, titles, basic descriptions, status, dependencies, or priority
+- Remove or replace existing content - only enhance it
+- Create new tasks - only work with the provided existing tasks
+
+PRD Content:
+--- PRD START ---
+{prd_content}
+--- PRD END ---
+
+Existing Tasks:
+--- EXISTING TASKS START ---
+{existing_tasks_json}
+--- EXISTING TASKS END ---
+
+Return the enhanced tasks in the same JSON format, preserving all original fields and adding comprehensive research-backed enhancements.
+
+Return your response in this exact format:
+{{
+    "tasks": [
+        {{
+            "id": <original_id>,
+            "title": "<original_title>",
+            "description": "<original_description>",
+            "status": "<original_status>", 
+            "dependencies": <original_dependencies>,
+            "priority": "<original_priority>",
+            "details": "<enhanced_strategic_details_with_best_practices>",
+            "testStrategy": "<enhanced_comprehensive_test_strategy>",
+            "researchJustification": "Detailed justification based on industry practices and research",
+            "bestPracticeReferences": "Comprehensive references to methodologies, standards, research",
+            "qualityGates": "Clear high-level acceptance criteria based on best practices", 
+            "riskMitigation": "Detailed risk analysis and mitigation strategies"
+        }}
+    ]
+}}
+"""

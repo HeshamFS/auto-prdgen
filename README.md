@@ -11,6 +11,9 @@ An AI-powered CLI tool for creating Product Requirement Documents (PRDs) and man
 - [Advanced Analysis](#advanced-analysis)
 - [Output and Project Structure](#output-and-project-structure)
 - [Technical Details](#technical-details)
+- [Related Projects](#related-projects)
+- [Inspiration](#inspiration)
+- [Support](#support)
 
 ## Prerequisites
 
@@ -238,3 +241,44 @@ Available models (as of June 2025):
 | `task-complexity` | Analyze task complexity |
 | `task-export` | Export tasks to various formats |
 | `nl-command` | Process natural language commands |
+```
+
+## Inspiration
+
+Special thanks to [@eyaltoledano/claude-task-master](https://github.com/eyaltoledano/claude-task-master) for inspiring the idea
+
+## Support
+
+For help and support with Auto-PRDGen:
+
+### Getting Help
+- **Documentation**: Check this README and the inline help commands (`auto-prdgen <command> --help`)
+
+### Reporting Issues
+1. **Search existing issues** to see if your problem has already been reported
+2. **Create a new issue** with detailed information including:
+   - Your operating system and Python version
+   - The exact command you ran
+   - The full error message or unexpected behavior
+   - Steps to reproduce the issue
+
+### Contributing
+We welcome contributions! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with clear commit messages
+4. Submit a pull request with a description of your changes
+
+### Feature Requests
+Have an idea for a new feature? Open an issue with the "enhancement" label and describe:
+- What problem the feature would solve
+- How you envision it working
+- Any examples or mockups if applicable
+
+### API Keys and Configuration
+If you're having trouble with API keys or configuration:
+- Ensure your `.env` file is properly formatted
+- Verify your Google API key has the necessary permissions
+- Check that you're using a supported Gemini model
+
+For urgent issues or security concerns, please contact the maintainers directly through GitHub.

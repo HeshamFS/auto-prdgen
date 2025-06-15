@@ -128,28 +128,36 @@ def llm_call_with_progress(model, prompt: str, desc: str = "Processing") -> str:
         spinner.stop()
         raise e
 
-def generate_prd(num_questions_str=None):
+def generate_prd(num_questions_str=None, project_name=None, project_description=None, complexity=None, priority=None, interactive=True):
     display_header("Auto-PRDGen", "Product Requirements Document Generator")
 
     # Create output directory if it doesn't exist
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Initial prompt: What do you like to build today?
-    colored_print(f"LLM: {INITIAL_PROMPT}", Fore.GREEN)
-    user_title_idea = get_user_input("You: ", "project_titles")
+    # Non-interactive mode: use provided parameters
+    if not interactive and project_name and project_description:
+        user_title_idea = project_name
+        user_description = project_description
+        colored_print(f"Creating PRD for: {user_title_idea}", Fore.GREEN)
+        colored_print(f"Description: {user_description}", Fore.CYAN)
+    else:
+        # Interactive mode: prompt user for input
+        # 1. Initial prompt: What do you like to build today?
+        colored_print(f"LLM: {INITIAL_PROMPT}", Fore.GREEN)
+        user_title_idea = get_user_input("You: ", "project_titles")
 
-    if not user_title_idea.strip():
-        colored_print("No input received. Exiting.", Fore.RED)
-        return
+        if not user_title_idea.strip():
+            colored_print("No input received. Exiting.", Fore.RED)
+            return
 
-    # 2. Get user's description
-    formatted_description_prompt = DESCRIPTION_PROMPT.format(user_title_idea=user_title_idea)
-    colored_print(f"LLM: {formatted_description_prompt}", Fore.GREEN)
-    user_description = get_user_input("You: ", "project_descriptions")
+        # 2. Get user's description
+        formatted_description_prompt = DESCRIPTION_PROMPT.format(user_title_idea=user_title_idea)
+        colored_print(f"LLM: {formatted_description_prompt}", Fore.GREEN)
+        user_description = get_user_input("You: ", "project_descriptions")
 
-    if not user_description.strip():
-        colored_print("No description provided. Exiting.", Fore.RED)
-        return
+        if not user_description.strip():
+            colored_print("No description provided. Exiting.", Fore.RED)
+            return
 
     colored_print(f"LLM: {PROCESSING_PROMPT}", Fore.GREEN)
 
@@ -193,18 +201,24 @@ def generate_prd(num_questions_str=None):
         colored_print(f"Error generating clarifying questions: {e}", Fore.RED)
         return
 
-
-    
     clarifying_questions = [q.strip() for q in clarifying_questions_text.split('\n') if q.strip() and not q.strip().startswith("Questions:")]
 
-    # 4. User replies to questions
+    # 4. User replies to questions (or skip in non-interactive mode)
     user_answers = []
-    colored_print(f"\n{ANSWER_QUESTIONS_PROMPT}", Fore.CYAN)
-    for i, question in enumerate(clarifying_questions):
-        if not question: continue
-        colored_print(f"LLM Q{i+1}: {question}", Fore.GREEN)
-        answer = get_user_input("You: ", "question_answers")
-        user_answers.append({"question": question, "answer": answer})
+    if interactive:
+        colored_print(f"\n{ANSWER_QUESTIONS_PROMPT}", Fore.CYAN)
+        for i, question in enumerate(clarifying_questions):
+            if not question: continue
+            colored_print(f"LLM Q{i+1}: {question}", Fore.GREEN)
+            answer = get_user_input("You: ", "question_answers")
+            user_answers.append({"question": question, "answer": answer})
+    else:
+        # In non-interactive mode, provide default answers based on project parameters
+        colored_print("Using default answers for clarifying questions...", Fore.CYAN)
+        for i, question in enumerate(clarifying_questions):
+            if not question: continue
+            default_answer = f"Please infer appropriate details based on the project description. Complexity: {complexity or 'medium'}, Priority: {priority or 'medium'}"
+            user_answers.append({"question": question, "answer": default_answer})
 
     colored_print(f"\nLLM: {THANK_YOU_PROMPT}\n", Fore.GREEN)
 
@@ -272,14 +286,38 @@ def generate_prd(num_questions_str=None):
         colored_print("---------------------------------------------", Fore.YELLOW)
 
 def handle_prd_init(args):
-    generate_prd(num_questions_str=args.num_questions if hasattr(args, 'num_questions') else None)
+    # Check if non-interactive parameters are provided
+    project_name = getattr(args, 'project_name', None)
+    project_description = getattr(args, 'project_description', None) 
+    complexity = getattr(args, 'complexity', None)
+    priority = getattr(args, 'priority', None)
+    
+    # Determine if we should run in interactive mode
+    interactive = not (project_name and project_description)
+    
+    generate_prd(
+        num_questions_str=args.num_questions if hasattr(args, 'num_questions') else None,
+        project_name=project_name,
+        project_description=project_description,
+        complexity=complexity,
+        priority=priority,
+        interactive=interactive
+    )
 
 def handle_task_update(args):
     display_header("Task Update", "Update task status and details")
     colored_print(TASK_UPDATE_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    task_id_arg = getattr(args, 'task_id', None)
+    new_status = getattr(args, 'status', None)
+    new_priority = getattr(args, 'priority', None)
+    new_description = getattr(args, 'description', None)
+    new_details = getattr(args, 'details', None)
+    
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -295,43 +333,72 @@ def handle_task_update(args):
         colored_print(f"  {task['id']}. {task['title']} [{task['status']}] - Priority: {task['priority']}", status_color)
     
     # Get task ID to update
-    try:
-        task_id = int(get_user_input("\nEnter task ID to update: ", "task_ids"))
+    if task_id_arg is not None:
+        # Non-interactive mode
+        task_id = task_id_arg
         task_to_update = next((task for task in tasks if task['id'] == task_id), None)
         
         if not task_to_update:
+            colored_print(f"Task ID {task_id} not found.", Fore.RED)
+            return
+    else:
+        # Interactive mode
+        try:
+            task_id = int(get_user_input("\nEnter task ID to update: ", "task_ids"))
+            task_to_update = next((task for task in tasks if task['id'] == task_id), None)
+            
+            if not task_to_update:
+                colored_print(INVALID_TASK_ID, Fore.RED)
+                return
+        except ValueError:
             colored_print(INVALID_TASK_ID, Fore.RED)
             return
-    except ValueError:
-        colored_print(INVALID_TASK_ID, Fore.RED)
-        return
     
     # Update task fields
     colored_print(f"\nUpdating Task: {task_to_update['title']}", Fore.CYAN)
     
-    # Update status
-    colored_print(f"Current status: {task_to_update['status']}", Fore.WHITE)
-    new_status_index, _ = select_from_list(TASK_STATUS_OPTIONS, "Select new status (or press Enter to keep current)")
-    if new_status_index is not None:
-        task_to_update['status'] = TASK_STATUS_OPTIONS[new_status_index]
-    
-    # Update priority
-    colored_print(f"Current priority: {task_to_update['priority']}", Fore.WHITE)
-    new_priority_index, _ = select_from_list(TASK_PRIORITY_OPTIONS, "Select new priority (or press Enter to keep current)")
-    if new_priority_index is not None:
-        task_to_update['priority'] = TASK_PRIORITY_OPTIONS[new_priority_index]
-    
-    # Update description
-    colored_print(f"Current description: {task_to_update['description']}", Fore.WHITE)
-    new_description = get_user_input("Enter new description (or press Enter to keep current): ", "task_descriptions")
-    if new_description.strip():
-        task_to_update['description'] = new_description
-    
-    # Update details
-    colored_print(f"Current details: {task_to_update['details']}", Fore.WHITE)
-    new_details = get_user_input("Enter new details (or press Enter to keep current): ", "task_details")
-    if new_details.strip():
-        task_to_update['details'] = new_details
+    if task_id_arg is not None:
+        # Non-interactive mode: use provided parameters
+        if new_status:
+            task_to_update['status'] = new_status
+            colored_print(f"Status updated to: {new_status}", Fore.GREEN)
+        
+        if new_priority:
+            task_to_update['priority'] = new_priority
+            colored_print(f"Priority updated to: {new_priority}", Fore.GREEN)
+        
+        if new_description:
+            task_to_update['description'] = new_description
+            colored_print(f"Description updated", Fore.GREEN)
+        
+        if new_details:
+            task_to_update['details'] = new_details
+            colored_print(f"Details updated", Fore.GREEN)
+    else:
+        # Interactive mode: prompt user for updates
+        # Update status
+        colored_print(f"Current status: {task_to_update['status']}", Fore.WHITE)
+        new_status_index, _ = select_from_list(TASK_STATUS_OPTIONS, "Select new status (or press Enter to keep current)")
+        if new_status_index is not None:
+            task_to_update['status'] = TASK_STATUS_OPTIONS[new_status_index]
+        
+        # Update priority
+        colored_print(f"Current priority: {task_to_update['priority']}", Fore.WHITE)
+        new_priority_index, _ = select_from_list(TASK_PRIORITY_OPTIONS, "Select new priority (or press Enter to keep current)")
+        if new_priority_index is not None:
+            task_to_update['priority'] = TASK_PRIORITY_OPTIONS[new_priority_index]
+        
+        # Update description
+        colored_print(f"Current description: {task_to_update['description']}", Fore.WHITE)
+        new_description = get_user_input("Enter new description (or press Enter to keep current): ", "task_descriptions")
+        if new_description.strip():
+            task_to_update['description'] = new_description
+        
+        # Update details
+        colored_print(f"Current details: {task_to_update['details']}", Fore.WHITE)
+        new_details = get_user_input("Enter new details (or press Enter to keep current): ", "task_details")
+        if new_details.strip():
+            task_to_update['details'] = new_details
     
     # Save updated tasks
     tasks_file = project_dir / "tasks.json"
@@ -346,8 +413,14 @@ def handle_task_view(args):
     display_header("Task Viewer", "Display tasks with filtering options")
     colored_print(TASK_VIEW_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    filter_by = getattr(args, 'filter', None)  # 'all', 'status', 'priority', 'pending', 'completed'
+    status_filter = getattr(args, 'status', None)
+    priority_filter = getattr(args, 'priority', None)
+    
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -356,24 +429,44 @@ def handle_task_view(args):
         colored_print("No tasks found in the selected project.", Fore.RED)
         return
     
-    # Filter options
-    filter_options = ["All tasks", "By status", "By priority", "Pending only", "Completed only"]
-    filter_index, _ = select_from_list(filter_options, "Select filter option")
-    
+    # Apply filters
     filtered_tasks = tasks
     
-    if filter_index == 1:  # By status
-        status_index, _ = select_from_list(TASK_STATUS_OPTIONS, "Select status to filter by")
-        if status_index is not None:
-            filtered_tasks = [task for task in tasks if task['status'] == TASK_STATUS_OPTIONS[status_index]]
-    elif filter_index == 2:  # By priority
-        priority_index, _ = select_from_list(TASK_PRIORITY_OPTIONS, "Select priority to filter by")
-        if priority_index is not None:
-            filtered_tasks = [task for task in tasks if task['priority'] == TASK_PRIORITY_OPTIONS[priority_index]]
-    elif filter_index == 3:  # Pending only
-        filtered_tasks = [task for task in tasks if task['status'] == 'pending']
-    elif filter_index == 4:  # Completed only
-        filtered_tasks = [task for task in tasks if task['status'] == 'completed']
+    if filter_by:
+        # Non-interactive mode
+        if filter_by == 'status' and status_filter:
+            filtered_tasks = [task for task in tasks if task['status'] == status_filter]
+            colored_print(f"Filtering by status: {status_filter}", Fore.CYAN)
+        elif filter_by == 'priority' and priority_filter:
+            filtered_tasks = [task for task in tasks if task['priority'] == priority_filter]
+            colored_print(f"Filtering by priority: {priority_filter}", Fore.CYAN)
+        elif filter_by == 'pending':
+            filtered_tasks = [task for task in tasks if task['status'] == 'pending']
+            colored_print("Showing pending tasks only", Fore.CYAN)
+        elif filter_by == 'completed':
+            filtered_tasks = [task for task in tasks if task['status'] == 'completed']
+            colored_print("Showing completed tasks only", Fore.CYAN)
+        elif filter_by == 'all':
+            filtered_tasks = tasks
+            colored_print("Showing all tasks", Fore.CYAN)
+    else:
+        # Interactive mode
+        # Filter options
+        filter_options = ["All tasks", "By status", "By priority", "Pending only", "Completed only"]
+        filter_index, _ = select_from_list(filter_options, "Select filter option")
+        
+        if filter_index == 1:  # By status
+            status_index, _ = select_from_list(TASK_STATUS_OPTIONS, "Select status to filter by")
+            if status_index is not None:
+                filtered_tasks = [task for task in tasks if task['status'] == TASK_STATUS_OPTIONS[status_index]]
+        elif filter_index == 2:  # By priority
+            priority_index, _ = select_from_list(TASK_PRIORITY_OPTIONS, "Select priority to filter by")
+            if priority_index is not None:
+                filtered_tasks = [task for task in tasks if task['priority'] == TASK_PRIORITY_OPTIONS[priority_index]]
+        elif filter_index == 3:  # Pending only
+            filtered_tasks = [task for task in tasks if task['status'] == 'pending']
+        elif filter_index == 4:  # Completed only
+            filtered_tasks = [task for task in tasks if task['status'] == 'completed']
     
     # Display filtered tasks
     if not filtered_tasks:
@@ -397,8 +490,12 @@ def handle_task_export(args):
     display_header("Task Export", "Export tasks to project management tools")
     colored_print(TASK_EXPORT_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    export_format_arg = getattr(args, 'format', None)
+    
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -407,15 +504,33 @@ def handle_task_export(args):
         colored_print("No tasks found in the selected project.", Fore.RED)
         return
     
-    # Export format options
+    # Determine export format
+    export_format = None
     export_options = ["Jira", "Trello", "GitHub Issues"]
-    export_index, _ = select_from_list(export_options, "Select export format")
     
-    if export_index is None:
-        colored_print("No export format selected.", Fore.YELLOW)
-        return
-    
-    export_format = export_options[export_index]
+    if export_format_arg:
+        # Non-interactive mode
+        # Handle case-insensitive matching
+        for option in export_options:
+            if option.lower() == export_format_arg.lower() or option.lower().replace(' ', '') == export_format_arg.lower():
+                export_format = option
+                break
+        
+        if not export_format:
+            colored_print(f"Invalid export format: {export_format_arg}", Fore.RED)
+            colored_print(f"Available formats: {', '.join(export_options)}", Fore.YELLOW)
+            return
+        
+        colored_print(f"Exporting to format: {export_format}", Fore.CYAN)
+    else:
+        # Interactive mode
+        export_index, _ = select_from_list(export_options, "Select export format")
+        
+        if export_index is None:
+            colored_print("No export format selected.", Fore.YELLOW)
+            return
+        
+        export_format = export_options[export_index]
     
     try:
         # Generate export content
@@ -472,18 +587,28 @@ def handle_prd_update(args):
     display_header("PRD Update", "Modify existing PRDs")
     colored_print(PRD_UPDATE_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    modification_request = getattr(args, 'modification_request', None)
+    
     # Select project and load PRD
-    project_dir, prd_content = select_project_and_load_prd()
+    project_dir, prd_content = select_project_and_load_prd(project_name)
     if not project_dir or not prd_content:
         return
     
     # Get modification request
-    colored_print("\nCurrent PRD loaded successfully.", Fore.GREEN)
-    modification_request = get_user_input("\nDescribe the changes you want to make to the PRD: ", "prd_modifications")
-    
-    if not modification_request.strip():
-        colored_print("No modification request provided. Exiting.", Fore.YELLOW)
-        return
+    if modification_request:
+        # Non-interactive mode
+        colored_print(f"Updating PRD for project: {project_dir.name}", Fore.GREEN)
+        colored_print(f"Modification request: {modification_request}", Fore.CYAN)
+    else:
+        # Interactive mode
+        colored_print("\nCurrent PRD loaded successfully.", Fore.GREEN)
+        modification_request = get_user_input("\nDescribe the changes you want to make to the PRD: ", "prd_modifications")
+        
+        if not modification_request.strip():
+            colored_print("No modification request provided. Exiting.", Fore.YELLOW)
+            return
     
     # Generate updated PRD using LLM
     model = genai.GenerativeModel(MODEL_NAME)
@@ -521,20 +646,39 @@ def handle_prd_compare(args):
     display_header("PRD Compare", "Show differences between PRD versions")
     colored_print(PRD_COMPARE_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    first_version = getattr(args, 'first_version', None)
+    second_version = getattr(args, 'second_version', None)
+    
     # Select project
     project_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir()]
     if not project_dirs:
         colored_print(f"No project directories found in {OUTPUT_DIR}.", Fore.RED)
         return
     
-    project_options = [d.name for d in project_dirs]
-    project_index, _ = select_from_list(project_options, "Select project to compare PRD versions")
-    
-    if project_index is None:
-        colored_print("No project selected.", Fore.YELLOW)
-        return
-    
-    project_dir = project_dirs[project_index]
+    if project_name:
+        # Non-interactive mode: find project by name
+        project_dir = None
+        for d in project_dirs:
+            if d.name == project_name:
+                project_dir = d
+                break
+        
+        if not project_dir:
+            colored_print(f"Project '{project_name}' not found.", Fore.RED)
+            colored_print(f"Available projects: {', '.join([d.name for d in project_dirs])}", Fore.YELLOW)
+            return
+    else:
+        # Interactive mode: let user select
+        project_options = [d.name for d in project_dirs]
+        project_index, _ = select_from_list(project_options, "Select project to compare PRD versions")
+        
+        if project_index is None:
+            colored_print("No project selected.", Fore.YELLOW)
+            return
+        
+        project_dir = project_dirs[project_index]
     
     # Find PRD files (current and backups)
     prd_files = []
@@ -552,19 +696,61 @@ def handle_prd_compare(args):
         colored_print(NO_PRD_VERSIONS, Fore.YELLOW)
         return
     
+    # If in non-interactive mode but no versions specified, default to current vs latest backup
+    if project_name and not (first_version and second_version):
+        if len(prd_files) >= 2:
+            first_version = "current"
+            second_version = "1"  # First backup
+            colored_print(f"No versions specified. Comparing current PRD vs latest backup.", Fore.CYAN)
+    
     # Select two versions to compare
-    colored_print("\nSelect first PRD version:", Fore.CYAN)
-    file_options = [name for name, _ in prd_files]
-    first_index, _ = select_from_list(file_options, "Select first version")
-    
-    if first_index is None:
-        return
-    
-    colored_print("\nSelect second PRD version:", Fore.CYAN)
-    second_index, _ = select_from_list(file_options, "Select second version")
-    
-    if second_index is None:
-        return
+    if first_version and second_version:
+        # Non-interactive mode: find versions by name/type
+        file_options = [name for name, _ in prd_files]
+        first_index = None
+        second_index = None
+        
+        # Find first version
+        if first_version.lower() == 'current':
+            first_index = 0 if len(prd_files) > 0 and 'Current' in prd_files[0][0] else None
+        else:
+            for i, (name, _) in enumerate(prd_files):
+                if first_version in name or str(i) == first_version:
+                    first_index = i
+                    break
+        
+        # Find second version 
+        if second_version.lower() == 'current':
+            second_index = 0 if len(prd_files) > 0 and 'Current' in prd_files[0][0] else None
+        else:
+            for i, (name, _) in enumerate(prd_files):
+                if second_version in name or str(i) == second_version:
+                    second_index = i
+                    break
+        
+        if first_index is None:
+            colored_print(f"First version '{first_version}' not found.", Fore.RED)
+            colored_print(f"Available versions: {', '.join(file_options)}", Fore.YELLOW)
+            return
+            
+        if second_index is None:
+            colored_print(f"Second version '{second_version}' not found.", Fore.RED)
+            colored_print(f"Available versions: {', '.join(file_options)}", Fore.YELLOW)
+            return
+    else:
+        # Interactive mode: let user select versions
+        colored_print("\nSelect first PRD version:", Fore.CYAN)
+        file_options = [name for name, _ in prd_files]
+        first_index, _ = select_from_list(file_options, "Select first version")
+        
+        if first_index is None:
+            return
+        
+        colored_print("\nSelect second PRD version:", Fore.CYAN)
+        second_index, _ = select_from_list(file_options, "Select second version")
+        
+        if second_index is None:
+            return
     
     # Read and compare files
     try:
@@ -607,8 +793,11 @@ def handle_prd_validate(args):
     display_header("PRD Validation", "Check PRD completeness and quality")
     colored_print(PRD_VALIDATE_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    
     # Select project and load PRD
-    project_dir, prd_content = select_project_and_load_prd()
+    project_dir, prd_content = select_project_and_load_prd(project_name)
     if not project_dir or not prd_content:
         return
     
@@ -636,21 +825,36 @@ def handle_prd_validate(args):
     except Exception as e:
         colored_print(f"Error validating PRD: {e}", Fore.RED)
 
-def select_project_and_load_tasks():
+def select_project_and_load_tasks(project_name=None):
     """Helper function to select a project and load its tasks.json file"""
     project_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir()]
     if not project_dirs:
         colored_print(f"No project directories found in {OUTPUT_DIR}.", Fore.RED)
         return None, None
     
-    project_options = [d.name for d in project_dirs]
-    project_index, _ = select_from_list(project_options, "Select project")
+    if project_name:
+        # Non-interactive mode: find project by name
+        project_dir = None
+        for d in project_dirs:
+            if d.name == project_name:
+                project_dir = d
+                break
+        
+        if not project_dir:
+            colored_print(f"Project '{project_name}' not found.", Fore.RED)
+            colored_print(f"Available projects: {', '.join([d.name for d in project_dirs])}", Fore.YELLOW)
+            return None, None
+    else:
+        # Interactive mode: let user select
+        project_options = [d.name for d in project_dirs]
+        project_index, _ = select_from_list(project_options, "Select project")
+        
+        if project_index is None:
+            colored_print("No project selected.", Fore.YELLOW)
+            return None, None
+        
+        project_dir = project_dirs[project_index]
     
-    if project_index is None:
-        colored_print("No project selected.", Fore.YELLOW)
-        return None, None
-    
-    project_dir = project_dirs[project_index]
     tasks_file = project_dir / "tasks.json"
     
     if not tasks_file.exists():
@@ -665,7 +869,7 @@ def select_project_and_load_tasks():
         colored_print(f"Error loading tasks: {e}", Fore.RED)
         return None, None
 
-def select_project_and_load_prd():
+def select_project_and_load_prd(project_name=None):
     """Helper function to select a project and load its PRD.md file"""
     project_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir()]
     if not project_dirs:
@@ -683,14 +887,29 @@ def select_project_and_load_prd():
         colored_print("No projects with PRD files found.", Fore.RED)
         return None, None
     
-    project_options = [d.name for d in projects_with_prd]
-    project_index, _ = select_from_list(project_options, "Select project")
+    if project_name:
+        # Non-interactive mode: find project by name
+        project_dir = None
+        for d in projects_with_prd:
+            if d.name == project_name:
+                project_dir = d
+                break
+        
+        if not project_dir:
+            colored_print(f"Project '{project_name}' not found or has no PRD.", Fore.RED)
+            colored_print(f"Available projects with PRDs: {', '.join([d.name for d in projects_with_prd])}", Fore.YELLOW)
+            return None, None
+    else:
+        # Interactive mode: let user select
+        project_options = [d.name for d in projects_with_prd]
+        project_index, _ = select_from_list(project_options, "Select project")
+        
+        if project_index is None:
+            colored_print("No project selected.", Fore.YELLOW)
+            return None, None
+        
+        project_dir = projects_with_prd[project_index]
     
-    if project_index is None:
-        colored_print("No project selected.", Fore.YELLOW)
-        return None, None
-    
-    project_dir = projects_with_prd[project_index]
     prd_file = project_dir / "PRD.md"
     
     try:
@@ -704,6 +923,9 @@ def select_project_and_load_prd():
 def handle_task_init(args):
     display_header("Task Generator", "Generate development tasks from PRD")
     colored_print(TASK_INIT_START, Fore.CYAN)
+
+    # Get non-interactive parameters 
+    project_name = getattr(args, 'project_name', None)
 
     # 1. List project directories in the output directory
     project_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir()]
@@ -727,20 +949,41 @@ def handle_task_init(args):
         colored_print(GENERATE_PRD_FIRST, Fore.YELLOW)
         return
 
-    colored_print(FOUND_PRD_FILES, Fore.GREEN)
-    
-    # Create options for selection
-    prd_options = [f"{project_dirs_map[prd_file].name} / {prd_file.name}" for prd_file in prd_files]
-    
-    # 2. User selects a PRD
-    selected_index, selected_option = select_from_list(prd_options, "Select a PRD file")
-    if selected_index is None:
-        colored_print("No PRD selected. Exiting.", Fore.YELLOW)
-        return
+    if project_name:
+        # Non-interactive mode: find project by name
+        selected_prd_file = None
+        selected_project_dir = None
         
-    selected_prd_file = prd_files[selected_index]
-    selected_project_dir = project_dirs_map[selected_prd_file]
-    colored_print(PRD_SELECTED.format(prd_file_name=selected_prd_file.name), Fore.GREEN)
+        for prd_file in prd_files:
+            project_dir = project_dirs_map[prd_file]
+            if project_dir.name == project_name:
+                selected_prd_file = prd_file
+                selected_project_dir = project_dir
+                break
+        
+        if not selected_prd_file:
+            colored_print(f"Project '{project_name}' not found or has no PRD.", Fore.RED)
+            available_projects = [project_dirs_map[prd_file].name for prd_file in prd_files]
+            colored_print(f"Available projects with PRDs: {', '.join(available_projects)}", Fore.YELLOW)
+            return
+        
+        colored_print(f"Using PRD from project: {selected_project_dir.name}", Fore.GREEN)
+    else:
+        # Interactive mode: let user select
+        colored_print(FOUND_PRD_FILES, Fore.GREEN)
+        
+        # Create options for selection
+        prd_options = [f"{project_dirs_map[prd_file].name} / {prd_file.name}" for prd_file in prd_files]
+        
+        # 2. User selects a PRD
+        selected_index, selected_option = select_from_list(prd_options, "Select a PRD file")
+        if selected_index is None:
+            colored_print("No PRD selected. Exiting.", Fore.YELLOW)
+            return
+            
+        selected_prd_file = prd_files[selected_index]
+        selected_project_dir = project_dirs_map[selected_prd_file]
+        colored_print(PRD_SELECTED.format(prd_file_name=selected_prd_file.name), Fore.GREEN)
 
     # 3. Read the selected PRD file
     try:
@@ -853,8 +1096,11 @@ def handle_task_next(args):
     display_header("Task Next", "Find next available task")
     colored_print(TASK_NEXT_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -978,23 +1224,20 @@ def display_task_details(task):
 
 def handle_task_expand(args):
     """Break down a task into subtasks using AI"""
-    import argparse
-    import sys
+    # Get parameters from args object
+    task_id = getattr(args, 'id', None)
+    force = getattr(args, 'force', False)
+    project_name = getattr(args, 'project_name', None)
     
-    # Get command line arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--id', type=int, required=True)
-    parser.add_argument('--force', action='store_true')
-    args, _ = parser.parse_known_args()
-    
-    task_id = args.id
-    force = args.force
+    if task_id is None:
+        colored_print("Error: Task ID is required. Use --id parameter.", Fore.RED)
+        return
     
     display_header("Task Expand", f"Break down Task #{task_id}")
     colored_print(TASK_EXPAND_START, Fore.CYAN)
     
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -1091,42 +1334,42 @@ def handle_task_expand(args):
 
 def handle_task_dependencies(args):
     """Manage task dependencies"""
-    import argparse
-    import sys
-    
-    # Get command line arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--add', action='store_true')
-    parser.add_argument('--remove', action='store_true')
-    parser.add_argument('--id', type=int, required=True)
-    parser.add_argument('--depends-on', type=int)
-    parser.add_argument('--validate', action='store_true')
-    args, _ = parser.parse_known_args()
+    # Get parameters from args object
+    add_dep = getattr(args, 'add', False)
+    remove_dep = getattr(args, 'remove', False)  
+    task_id = getattr(args, 'id', None)
+    depends_on = getattr(args, 'depends_on', None)
+    validate = getattr(args, 'validate', False)
+    project_name = getattr(args, 'project_name', None)
     
     display_header("Task Dependencies", "Manage task relationships")
     
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
     tasks = tasks_data.get("tasks", [])
     task_map = {task['id']: task for task in tasks}
     
-    if args.validate:
+    if validate:
         validate_all_dependencies(tasks)
         return
     
-    # Find target task
-    target_task = task_map.get(args.id)
-    if not target_task:
-        colored_print(f"Task #{args.id} not found.", Fore.RED)
+    if task_id is None:
+        colored_print("Error: Task ID is required. Use --id parameter.", Fore.RED)
         return
     
-    if args.add and args.depends_on:
-        add_task_dependency(target_task, args.depends_on, task_map, project_dir, tasks_data)
-    elif args.remove and args.depends_on:
-        remove_task_dependency(target_task, args.depends_on, project_dir, tasks_data)
+    # Find target task
+    target_task = task_map.get(task_id)
+    if not target_task:
+        colored_print(f"Task #{task_id} not found.", Fore.RED)
+        return
+    
+    if add_dep and depends_on:
+        add_task_dependency(target_task, depends_on, task_map, project_dir, tasks_data)
+    elif remove_dep and depends_on:
+        remove_task_dependency(target_task, depends_on, project_dir, tasks_data)
     else:
         colored_print("Please specify --add or --remove with --depends-on, or use --validate.", Fore.YELLOW)
 
@@ -1239,13 +1482,14 @@ def validate_all_dependencies(tasks):
 
 def handle_task_complexity(args):
     """Analyze task complexity and provide recommendations"""
-    # 'args' is already populated by the main CLI parser. No need to re-parse.
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
     
     display_header("Task Complexity Analysis", "AI-powered complexity assessment")
     colored_print(TASK_COMPLEXITY_START, Fore.CYAN)
     
     # Select project and load tasks
-    project_dir, tasks_data = select_project_and_load_tasks()
+    project_dir, tasks_data = select_project_and_load_tasks(project_name)
     if not project_dir or not tasks_data:
         return
     
@@ -1357,8 +1601,11 @@ def handle_prd_complexity(args):
     display_header("PRD Complexity Analysis", "AI-powered PRD complexity assessment")
     colored_print(COMPLEXITY_ANALYSIS_START, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    
     # Select project and load PRD content
-    project_dir, prd_content = select_project_and_load_prd()
+    project_dir, prd_content = select_project_and_load_prd(project_name)
     if not project_dir or not prd_content:
         return
     
@@ -1387,21 +1634,20 @@ def handle_prd_complexity(args):
 
 def handle_natural_language_command(args):
     """Process natural language commands and map them to system commands"""
-    import argparse
-    import sys
     import json
     
-    # Get command line arguments from the main parser
-    args = sys.argv[2:]  # Skip the first two args ('auto-prdgen' and 'nl-command')
+    # Get parameters from args object
+    suggest_only = getattr(args, 'suggest_only', False)
     
-    # Check if --suggest-only flag is present
-    suggest_only = '--suggest-only' in args
-    if suggest_only:
-        # Remove the flag from args for further processing
-        args = [arg for arg in args if arg != '--suggest-only']
-        
-    # Combine remaining arguments as the command
-    user_input = ' '.join(args)
+    # Handle query argument properly - args.query should be a list due to nargs='+'
+    if hasattr(args, 'query') and args.query:
+        user_input = ' '.join(args.query)
+    else:
+        user_input = ""
+    
+    if not user_input.strip():
+        colored_print("No query provided. Please specify a natural language command.", Fore.RED)
+        return
     
     display_header("Natural Language Command Processing", "AI-powered command interpretation")
     colored_print(NATURAL_LANGUAGE_PROCESSING, Fore.CYAN)
@@ -1446,52 +1692,22 @@ def handle_natural_language_command(args):
             
             confidence = result.get('confidence', 0)
             if confidence >= 7:
-                colored_print(COMMAND_INTERPRETED.format(command=command), Fore.GREEN)
-                cmd_str = f"{command}"
+                # Build the command string for display
+                cmd_str = command
+                if parameters:
+                    for key, value in parameters.items():
+                        if isinstance(value, bool) and value:
+                            cmd_str += f" --{key}"
+                        elif not isinstance(value, bool):
+                            cmd_str += f" --{key} {value}"
+                
+                colored_print(COMMAND_INTERPRETED.format(command=cmd_str), Fore.GREEN)
                 
                 if suggest_only:
                     colored_print(f"\nSuggested command: auto-prdgen {cmd_str}", Fore.CYAN)
                 else:
-                    # Build the command and its arguments
-                    colored_print(f"\nExecuting command: auto-prdgen {cmd_str}", Fore.CYAN)
-                    colored_print("\n" + "-"*50, Fore.YELLOW)
-                    
-                    # Create the argument structure for the command
-                    cmd_args = []
-                    if parameters:
-                        for key, value in parameters.items():
-                            if isinstance(value, bool) and value:
-                                cmd_args.append(f"--{key}")
-                            elif not isinstance(value, bool):
-                                cmd_args.append(f"--{key}")
-                                cmd_args.append(str(value))
-                    
-                    # Find and execute the mapped function
-                    import importlib
-                    import inspect
-                    
-                    # Convert command format to function name (e.g., task-view -> handle_task_view)
-                    func_name = f"handle_{command.replace('-', '_')}"
-                    
-                    # Find the function in the global namespace
-                    if func_name in globals() and callable(globals()[func_name]):
-                        # Set sys.argv to make it look like this command was called directly
-                        # Create a mock args object to pass to the handler
-                        mock_args = argparse.Namespace()
-                        # Set the command itself as an attribute, though handlers might not use it
-                        # setattr(mock_args, 'command', command) 
-                        if parameters:
-                            for key, value in parameters.items():
-                                setattr(mock_args, key.replace('-', '_'), value)
-                        
-                        try:
-                            globals()[func_name](mock_args)  # Call the function with the mock_args
-                            colored_print("\n" + "-"*50, Fore.YELLOW)
-                            colored_print(f"Command '{command}' executed successfully.", Fore.GREEN)
-                        except Exception as exec_error:
-                            colored_print(f"Error executing command '{command}': {exec_error}", Fore.RED)
-                    else:
-                        colored_print(f"Command '{command}' has no implementation function '{func_name}'.", Fore.RED)
+                    colored_print(f"\nCommand interpretation complete: {cmd_str}", Fore.CYAN)
+                    colored_print("Note: Use the suggested command directly for execution to avoid recursive calls.", Fore.YELLOW)
                 
             else:
                 colored_print(COMMAND_UNCLEAR, Fore.YELLOW)
@@ -1499,8 +1715,8 @@ def handle_natural_language_command(args):
                 
         except json.JSONDecodeError as e:
             colored_print(f"Error parsing AI response: {e}", Fore.RED)
-            colored_print("Raw response:", Fore.YELLOW)
-            stream_print(interpretation_result)
+            colored_print("Raw response (first 500 chars):", Fore.YELLOW)
+            colored_print(interpretation_result[:500] + "..." if len(interpretation_result) > 500 else interpretation_result, Fore.WHITE)
             
     except Exception as e:
         colored_print(f"Error processing natural language command: {e}", Fore.RED)
@@ -1510,69 +1726,159 @@ def handle_research_backed_tasks(args):
     display_header("Research-Backed Task Generation", "Industry best practices integration")
     colored_print(RESEARCH_BACKED_GENERATION, Fore.CYAN)
     
+    # Get non-interactive parameters
+    project_name = getattr(args, 'project_name', None)
+    
     # Select project and load PRD
-    project_dir, prd_content = select_project_and_load_prd()
+    project_dir, prd_content = select_project_and_load_prd(project_name)
     if not project_dir or not prd_content:
         return
     
     # Check if tasks already exist
     tasks_file = project_dir / "tasks.json"
-    if tasks_file.exists() and not args.force:
-        colored_print(f"Tasks already exist in {tasks_file}. Use --force to regenerate.", Fore.YELLOW)
-        return
-
-    # Select the prompt based on the level
-    if args.level == 'simple':
-        task_generation_prompt = SIMPLE_RESEARCH_BACKED_TASK_GENERATION_PROMPT.format(prd_content=prd_content)
-        progress_desc = "Generating high-level research-backed epics"
-    else: # 'detailed'
-        task_generation_prompt = RESEARCH_BACKED_TASK_GENERATION_PROMPT.format(prd_content=prd_content)
-        progress_desc = "Generating detailed research-backed tasks"
-
-    # Generate research-backed tasks using AI
+    existing_tasks_data = None
+    
+    if tasks_file.exists():
+        try:
+            with open(tasks_file, 'r', encoding='utf-8') as f:
+                existing_tasks_data = json.load(f)
+            colored_print(f"Found existing tasks in {tasks_file}. Will enhance them with research-backed information.", Fore.CYAN)
+        except Exception as e:
+            colored_print(f"Error loading existing tasks: {e}. Will create new tasks.", Fore.YELLOW)
+            existing_tasks_data = None
+    
+    # If --force is used, ignore existing tasks and create from scratch
+    if args.force:
+        colored_print("--force flag used. Creating new research-backed tasks from scratch.", Fore.YELLOW)
+        existing_tasks_data = None
+    
+    # Generate or enhance tasks using AI
     model = genai.GenerativeModel(MODEL_NAME)
     
-    try:
-        generated_tasks_json_str = llm_call_with_progress(
-            model,
-            task_generation_prompt,
-            progress_desc
-        )
+    if existing_tasks_data and existing_tasks_data.get('tasks'):
+        # Enhance existing tasks with research-backed information
+        colored_print(f"Enhancing {len(existing_tasks_data['tasks'])} existing tasks with research-backed information...", Fore.CYAN)
         
-        # Parse the generated JSON
+        # Convert existing tasks to JSON string for the prompt
+        existing_tasks_json = json.dumps(existing_tasks_data, indent=2, ensure_ascii=False)
+        
+        # Select the enhancement prompt based on the level
+        if args.level == 'simple':
+            from prompts import SIMPLE_RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT
+            task_enhancement_prompt = SIMPLE_RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT.format(
+                prd_content=prd_content,
+                existing_tasks_json=existing_tasks_json
+            )
+            progress_desc = "Enhancing existing high-level tasks with research-backed information"
+        else: # 'detailed'
+            from prompts import RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT
+            task_enhancement_prompt = RESEARCH_BACKED_TASK_ENHANCEMENT_PROMPT.format(
+                prd_content=prd_content,
+                existing_tasks_json=existing_tasks_json
+            )
+            progress_desc = "Enhancing existing tasks with research-backed information"
+        
         try:
-            # Clean up the JSON string
-            cleaned_json_str = generated_tasks_json_str.strip()
-            if cleaned_json_str.startswith('```json'):
-                cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[1:])
-            if cleaned_json_str.endswith('```'):
-                cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[:-1])
-            cleaned_json_str = cleaned_json_str.strip()
+            enhanced_tasks_json_str = llm_call_with_progress(
+                model,
+                task_enhancement_prompt,
+                progress_desc
+            )
             
-            tasks_data = json.loads(cleaned_json_str)
-            colored_print("Successfully parsed generated research-backed tasks.", Fore.GREEN)
-            
-            # Save the generated tasks to a JSON file
-            with open(tasks_file, 'w', encoding='utf-8') as f:
-                json.dump(tasks_data, f, indent=2, ensure_ascii=False)
-            colored_print(f"Research-backed tasks saved to {tasks_file}", Fore.GREEN)
-            
-            # Convert tasks to individual .md files
-            colored_print("\nConverting tasks to individual Markdown files...", Fore.CYAN)
-            tasks_dir = project_dir / "tasks"
-            tasks_dir.mkdir(parents=True, exist_ok=True)
-            
-            total_tasks = len(tasks_data.get("tasks", []))
-            progress = ProgressBar(total=total_tasks, desc="Converting research-backed tasks")
-            
-            for i, task in enumerate(tasks_data.get("tasks", [])):
-                task_id = task.get("id", "unknown")
-                task_title = task.get("title", "Untitled Task").replace(" ", "_").replace("/", "_")
-                task_filename = tasks_dir / f"task_{task_id}_{task_title}.md"
+            # Parse the enhanced JSON
+            try:
+                # Clean up the JSON string
+                cleaned_json_str = enhanced_tasks_json_str.strip()
+                if cleaned_json_str.startswith('```json'):
+                    cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[1:])
+                if cleaned_json_str.endswith('```'):
+                    cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[:-1])
+                cleaned_json_str = cleaned_json_str.strip()
                 
-                dependencies = ", ".join(map(str, task.get("dependencies", [])))
+                enhanced_tasks_data = json.loads(cleaned_json_str)
+                colored_print("Successfully enhanced existing tasks with research-backed information.", Fore.GREEN)
                 
-                task_md_content = f"""# Task ID: {task.get("id", "unknown")}
+                # Save the enhanced tasks to the JSON file
+                with open(tasks_file, 'w', encoding='utf-8') as f:
+                    json.dump(enhanced_tasks_data, f, indent=2, ensure_ascii=False)
+                colored_print(f"Enhanced research-backed tasks saved to {tasks_file}", Fore.GREEN)
+                
+                tasks_data = enhanced_tasks_data
+                
+            except json.JSONDecodeError as e:
+                colored_print(f"Error: AI did not return valid JSON during enhancement. Details: {e}", Fore.RED)
+                display_header("Raw AI Output", "Problematic JSON")
+                stream_print(enhanced_tasks_json_str)
+                return
+                
+        except Exception as e:
+            colored_print(f"Error enhancing existing tasks: {e}", Fore.RED)
+            return
+    else:
+        # No existing tasks found, create new research-backed tasks from scratch
+        colored_print("No existing tasks found. Creating new research-backed tasks from scratch...", Fore.CYAN)
+        
+        # Select the prompt based on the level
+        if args.level == 'simple':
+            from prompts import SIMPLE_RESEARCH_BACKED_TASK_GENERATION_PROMPT
+            task_generation_prompt = SIMPLE_RESEARCH_BACKED_TASK_GENERATION_PROMPT.format(prd_content=prd_content)
+            progress_desc = "Generating high-level research-backed epics"
+        else: # 'detailed'
+            from prompts import RESEARCH_BACKED_TASK_GENERATION_PROMPT
+            task_generation_prompt = RESEARCH_BACKED_TASK_GENERATION_PROMPT.format(prd_content=prd_content)
+            progress_desc = "Generating detailed research-backed tasks"
+
+        try:
+            generated_tasks_json_str = llm_call_with_progress(
+                model,
+                task_generation_prompt,
+                progress_desc
+            )
+            
+            # Parse the generated JSON
+            try:
+                # Clean up the JSON string
+                cleaned_json_str = generated_tasks_json_str.strip()
+                if cleaned_json_str.startswith('```json'):
+                    cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[1:])
+                if cleaned_json_str.endswith('```'):
+                    cleaned_json_str = '\n'.join(cleaned_json_str.split('\n')[:-1])
+                cleaned_json_str = cleaned_json_str.strip()
+                
+                tasks_data = json.loads(cleaned_json_str)
+                colored_print("Successfully parsed generated research-backed tasks.", Fore.GREEN)
+                
+                # Save the generated tasks to a JSON file
+                with open(tasks_file, 'w', encoding='utf-8') as f:
+                    json.dump(tasks_data, f, indent=2, ensure_ascii=False)
+                colored_print(f"Research-backed tasks saved to {tasks_file}", Fore.GREEN)
+                
+            except json.JSONDecodeError as e:
+                colored_print(f"Error: AI did not return valid JSON. Details: {e}", Fore.RED)
+                display_header("Raw AI Output", "Problematic JSON")
+                stream_print(generated_tasks_json_str)
+                return
+                
+        except Exception as e:
+            colored_print(f"Error generating research-backed tasks: {e}", Fore.RED)
+            return
+    
+    # Convert tasks to individual .md files (both for enhanced and new tasks)
+    colored_print("\nConverting tasks to individual Markdown files...", Fore.CYAN)
+    tasks_dir = project_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    
+    total_tasks = len(tasks_data.get("tasks", []))
+    progress = ProgressBar(total=total_tasks, desc="Converting research-backed tasks")
+    
+    for i, task in enumerate(tasks_data.get("tasks", [])):
+        task_id = task.get("id", "unknown")
+        task_title = task.get("title", "Untitled Task").replace(" ", "_").replace("/", "_")
+        task_filename = tasks_dir / f"task_{task_id}_{task_title}.md"
+        
+        dependencies = ", ".join(map(str, task.get("dependencies", [])))
+        
+        task_md_content = f"""# Task ID: {task.get("id", "unknown")}
 # Title: {task.get("title", "Untitled Task")}
 # Status: {task.get("status", "pending")}
 # Dependencies: {dependencies}
@@ -1597,25 +1903,15 @@ def handle_research_backed_tasks(args):
 # Risk Mitigation:
 {task.get("riskMitigation", "No risk mitigation strategies defined.")}
 """
-                
-                with open(task_filename, 'w', encoding='utf-8') as f:
-                    f.write(task_md_content)
-                
-                progress.set_progress(i + 1)
-            
-            progress.finish()
-            colored_print(RESEARCH_TASKS_GENERATED, Fore.GREEN)
-            colored_print(f"All research-backed tasks converted to Markdown files in '{tasks_dir}' directory.", Fore.GREEN)
-            
-        except json.JSONDecodeError as e:
-            colored_print(f"Error: AI did not return valid JSON. Details: {e}", Fore.RED)
-            display_header("Raw AI Output", "Problematic JSON")
-            stream_print(generated_tasks_json_str)
-            
-    except Exception as e:
-        colored_print(f"Error generating research-backed tasks: {e}", Fore.RED)
-
-
+        
+        with open(task_filename, 'w', encoding='utf-8') as f:
+            f.write(task_md_content)
+        
+        progress.set_progress(i + 1)
+    
+    progress.finish()
+    colored_print(RESEARCH_TASKS_GENERATED, Fore.GREEN)
+    colored_print(f"All research-backed tasks converted to Markdown files in '{tasks_dir}' directory.", Fore.GREEN)
 
 def main():
     # Configuration is automatically loaded when imported
@@ -1669,6 +1965,28 @@ def main():
         type=str,
         help="Number of clarifying questions to ask (e.g., '5' or '3-5'). Default: 3-5."
     )
+    prd_init_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name/title (for non-interactive mode)"
+    )
+    prd_init_parser.add_argument(
+        "--project-description", 
+        type=str,
+        help="Project description (for non-interactive mode)"
+    )
+    prd_init_parser.add_argument(
+        "--complexity",
+        type=str,
+        choices=['low', 'medium', 'high'],
+        help="Project complexity level (for non-interactive mode)"
+    )
+    prd_init_parser.add_argument(
+        "--priority",
+        type=str, 
+        choices=['low', 'medium', 'high'],
+        help="Project priority level (for non-interactive mode)"
+    )
     prd_init_parser.set_defaults(func=handle_prd_init)
 
     # Task Init Subcommand
@@ -1683,12 +2001,49 @@ def main():
         default='detailed', 
         help="Set the level of detail for task generation. 'simple' for high-level tasks, 'detailed' for granular tasks."
     )
+    task_init_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     task_init_parser.set_defaults(func=handle_task_init)
 
     # Task Update Subcommand
     task_update_parser = subparsers.add_parser(
         "task-update", 
         help="Update task status and details."
+    )
+    task_update_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
+    task_update_parser.add_argument(
+        "--task-id",
+        type=int,
+        help="Task ID to update (for non-interactive mode)"
+    )
+    task_update_parser.add_argument(
+        "--status",
+        type=str,
+        choices=['pending', 'in-progress', 'completed'],
+        help="New task status (for non-interactive mode)"
+    )
+    task_update_parser.add_argument(
+        "--priority",
+        type=str,
+        choices=['low', 'medium', 'high'],
+        help="New task priority (for non-interactive mode)"
+    )
+    task_update_parser.add_argument(
+        "--description",
+        type=str,
+        help="New task description (for non-interactive mode)"
+    )
+    task_update_parser.add_argument(
+        "--details",
+        type=str,
+        help="New task details (for non-interactive mode)"
     )
     task_update_parser.set_defaults(func=handle_task_update)
 
@@ -1697,12 +2052,46 @@ def main():
         "task-view", 
         help="Display tasks with filtering options."
     )
+    task_view_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
+    task_view_parser.add_argument(
+        "--filter",
+        type=str,
+        choices=['all', 'status', 'priority', 'pending', 'completed'],
+        help="Filter type (for non-interactive mode)"
+    )
+    task_view_parser.add_argument(
+        "--status",
+        type=str,
+        choices=['pending', 'in-progress', 'completed'],
+        help="Status to filter by (use with --filter status)"
+    )
+    task_view_parser.add_argument(
+        "--priority",
+        type=str,
+        choices=['low', 'medium', 'high'],
+        help="Priority to filter by (use with --filter priority)"
+    )
     task_view_parser.set_defaults(func=handle_task_view)
 
     # Task Export Subcommand
     task_export_parser = subparsers.add_parser(
         "task-export", 
         help="Export tasks to project management tools (Jira, Trello, GitHub Issues)."
+    )
+    task_export_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
+    task_export_parser.add_argument(
+        "--format",
+        type=str,
+        choices=['jira', 'trello', 'github', 'githubissues'],
+        help="Export format: jira, trello, github/githubissues (for non-interactive mode)"
     )
     task_export_parser.set_defaults(func=handle_task_export)
 
@@ -1711,12 +2100,37 @@ def main():
         "prd-update", 
         help="Modify existing PRDs."
     )
+    prd_update_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
+    prd_update_parser.add_argument(
+        "--modification-request",
+        type=str,
+        help="Description of changes to make to the PRD (for non-interactive mode)"
+    )
     prd_update_parser.set_defaults(func=handle_prd_update)
 
     # PRD Compare Subcommand
     prd_compare_parser = subparsers.add_parser(
         "prd-compare", 
         help="Show differences between PRD versions."
+    )
+    prd_compare_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
+    prd_compare_parser.add_argument(
+        "--first-version",
+        type=str,
+        help="First version to compare (e.g., 'current', 'backup_123456', or index number)"
+    )
+    prd_compare_parser.add_argument(
+        "--second-version",
+        type=str,
+        help="Second version to compare (e.g., 'current', 'backup_123456', or index number)"
     )
     prd_compare_parser.set_defaults(func=handle_prd_compare)
 
@@ -1725,12 +2139,22 @@ def main():
         "prd-validate", 
         help="Check PRD completeness and quality."
     )
+    prd_validate_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     prd_validate_parser.set_defaults(func=handle_prd_validate)
 
     # Task Next Subcommand (Priority 1 Enhancement)
     task_next_parser = subparsers.add_parser(
         "task-next", 
         help="Uses AI to recommend the most logical next task from available (pending and unblocked) tasks, considering impact and flow. Provides justification."
+    )
+    task_next_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
     )
     task_next_parser.set_defaults(func=handle_task_next)
 
@@ -1741,6 +2165,11 @@ def main():
     )
     task_expand_parser.add_argument("--id", type=int, required=True, help="Task ID to expand")
     task_expand_parser.add_argument("--force", action="store_true", help="Force regeneration of existing subtasks")
+    task_expand_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     task_expand_parser.set_defaults(func=handle_task_expand)
 
     # Task Dependencies Subcommand (Priority 1 Enhancement)
@@ -1750,9 +2179,14 @@ def main():
     )
     task_deps_parser.add_argument("--add", action="store_true", help="Add a dependency")
     task_deps_parser.add_argument("--remove", action="store_true", help="Remove a dependency")
-    task_deps_parser.add_argument("--id", type=int, required=True, help="Task ID")
+    task_deps_parser.add_argument("--id", type=int, help="Task ID (required unless using --validate)")
     task_deps_parser.add_argument("--depends-on", type=int, help="Dependency task ID")
     task_deps_parser.add_argument("--validate", action="store_true", help="Validate all dependencies")
+    task_deps_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     task_deps_parser.set_defaults(func=handle_task_dependencies)
 
     # Task Complexity Subcommand (Priority 1 Enhancement)
@@ -1763,12 +2197,22 @@ def main():
     complexity_group = task_complexity_parser.add_mutually_exclusive_group(required=True)
     complexity_group.add_argument("--id", type=int, help="ID of the specific task to analyze.")
     complexity_group.add_argument("--all", action="store_true", help="Analyze all tasks in the project.")
+    task_complexity_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     task_complexity_parser.set_defaults(func=handle_task_complexity)
 
     # PRD Complexity Analysis Subcommand (Priority 2 Enhancement)
     prd_complexity_parser = subparsers.add_parser(
         "prd-complexity", 
         help="Analyze PRD complexity and get recommendations."
+    )
+    prd_complexity_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
     )
     prd_complexity_parser.set_defaults(func=handle_prd_complexity)
 
@@ -1803,6 +2247,11 @@ def main():
         help="Set the level of detail for task generation. 'simple' for high-level epics, 'detailed' for granular tasks."
     )
     research_tasks_parser.add_argument("--force", action="store_true", help="Force regeneration of existing tasks")
+    research_tasks_parser.add_argument(
+        "--project-name",
+        type=str,
+        help="Project name (for non-interactive mode)"
+    )
     research_tasks_parser.set_defaults(func=handle_research_backed_tasks)
 
     args = parser.parse_args()
